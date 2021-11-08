@@ -1259,10 +1259,27 @@ MEMKIND_EXPORT void *memtier_kind_calloc(memkind_t kind, size_t num,
 MEMKIND_EXPORT void *memtier_realloc(struct memtier_memory *memory, void *ptr,
                                      size_t size)
 {
-    // reallocate inside same kind
     if (ptr) {
-        struct memkind *kind = memkind_detect_kind(ptr);
-        ptr = memtier_kind_realloc(kind, ptr, size);
+        uint64_t data;
+        struct memkind *newkind = memory->get_kind(memory, size, &data);
+        struct memkind *oldkind = memkind_detect_kind(ptr);
+
+        if (oldkind != newkind) {
+            void *nptr = memtier_kind_malloc(newkind, size);
+            memory->post_alloc(data, ptr, size);
+            memory->update_cfg(memory);
+
+            size_t oldsize = jemk_malloc_usable_size(ptr);
+            if (oldsize > size)
+                oldsize = size;
+            memcpy(nptr, ptr, oldsize);
+
+            memtier_kind_free(oldkind, ptr);
+            return nptr;
+        }
+
+        // reallocate inside same kind
+        ptr = memtier_kind_realloc(oldkind, ptr, size);
         memory->update_cfg(memory);
         // NOTE: new ptr == NULL if size == 0
         return ptr;
