@@ -11,6 +11,19 @@
 #include <pthread.h>
 #include <string.h>
 #include <dlfcn.h>
+#include <sys/mman.h>
+
+#include <pthread.h>
+#include <threads.h>
+#include <execinfo.h>
+
+#ifdef HAVE_STDATOMIC_H
+#include <stdatomic.h>
+#define MEMKIND_ATOMIC _Atomic
+#else
+#define MEMKIND_ATOMIC
+#endif
+
 
 #define MEMTIER_EXPORT __attribute__((visibility("default")))
 #define MEMTIER_INIT   __attribute__((constructor))
@@ -85,6 +98,9 @@ static int destructed;
 
 static struct memtier_memory *current_memory;
 
+void *sys_mmap(void *, size_t, int, int, int, off_t);
+int sys_munmap(void *, size_t);
+
 MEMTIER_EXPORT void *malloc(size_t size)
 {
     if (MEMTIER_LIKELY(current_memory)) {
@@ -142,6 +158,40 @@ MEMTIER_EXPORT size_t malloc_usable_size(void *ptr)
 {
     return memtier_usable_size(ptr);
 }
+
+MEMTIER_EXPORT void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+    // TODO tweaked for MLC - find other valid flag combinations
+    if ((current_memory == 0) || (
+        (addr == NULL) &&
+        (prot == (PROT_READ | PROT_WRITE)) && 
+        (flags == (MAP_ANONYMOUS | MAP_PRIVATE)))) 
+    {
+        //log_err("mmap: start:%p, length:%lu, prot:%d, flags:%d, fd:%d, offset:%ld", 
+        //    addr, length, prot, flags, fd, offset);
+
+        return memtier_mmap(current_memory, addr, length, prot, flags, fd, offset);
+    }
+
+    return sys_mmap(addr, length, prot, flags, fd, offset);
+}
+
+/*
+MEMTIER_EXPORT int munmap(void *addr, size_t length)
+{
+    int i;
+    for(i = 0; i < num_mmaps; i++)
+    {
+        if (mmap_map[i] == addr) {
+            //log_err("munmap: start:%p, length:%lu", addr, length);
+            memtier_munmap(addr);
+            return 0;
+        }
+    }
+
+    return sys_munmap(addr, length);
+}
+*/
 
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 
